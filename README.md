@@ -1,15 +1,13 @@
 # Server Groups
 
-Server Groups adds global, visual groups to the Pelican server list. Root administrators can create groups, choose their color, set their order, assign servers, and grant existing users per-group Pelican permissions. A server can belong to one group at a time.
+Makes it possible to organize servers into groups, so they are visually together on the server list page.
 
-Group administration is intentionally restricted to root administrators because groups and grants are global across nodes. Restricted administrators retain their normal Pelican capabilities but cannot view or manage this resource.
+It also makes it possible to add a user to a group and give them permissions for all servers within the group. Saves some time instead of adding them to each server, if working in a larger environment.
 
-## Import
+<img width="1499" height="520" alt="image" src="https://github.com/user-attachments/assets/25917ca3-acf2-4e06-94a5-30a1c8f8a91f" />
 
-1. Open the Pelican administrator area.
-2. Open **Plugins** and choose **Import from file**.
-3. Select `pelican-server-groups.zip`.
-4. Install and enable the imported plugin.
-5. Open **Server Groups** from the administrator navigation.
+## How does it work?
 
-Group user access is virtual and follows the group membership, so moving a server between groups updates access automatically without creating duplicate core subuser records. Disabling or uninstalling it removes only its own grouping and group-access data.
+All groups are managed inside of the Admin panel, in a new 'Server Groups' tab found on the sidebar.
+
+<img width="1014" height="541" alt="image" src="https://github.com/user-attachments/assets/c56b1b65-0cb2-4cf2-858b-1f5ec125a5fb" />
