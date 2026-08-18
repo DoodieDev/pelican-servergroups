@@ -23,20 +23,22 @@ class GroupAwareAuthenticateServerAccess extends AuthenticateServerAccess
 
         $wasLoaded = $server->relationLoaded('subusers');
         $originalSubusers = $wasLoaded ? $server->getRelation('subusers') : null;
-        $subusers = $server->subusers;
-
-        if (!$subusers->contains('user_id', $user->getKey())) {
-            $virtualSubuser = new Subuser([
-                'user_id' => $user->getKey(),
-                'server_id' => $server->getKey(),
-                'permissions' => ServerGroupService::permissionsFor($user, $server),
-            ]);
-            $virtualSubuser->exists = false;
-            $subusers->push($virtualSubuser);
-            $server->setRelation('subusers', $subusers);
-        }
 
         try {
+            // Never mutate a collection that belongs to the server's original relation state.
+            $subusers = $wasLoaded ? clone $originalSubusers : $server->subusers;
+
+            if (!$subusers->contains('user_id', $user->getKey())) {
+                $virtualSubuser = new Subuser([
+                    'user_id' => $user->getKey(),
+                    'server_id' => $server->getKey(),
+                    'permissions' => ServerGroupService::permissionsFor($user, $server),
+                ]);
+                $virtualSubuser->exists = false;
+                $subusers->push($virtualSubuser);
+                $server->setRelation('subusers', $subusers);
+            }
+
             return parent::handle($request, $next);
         } finally {
             if ($wasLoaded) {

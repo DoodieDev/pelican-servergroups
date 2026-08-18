@@ -10,6 +10,8 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
+use LogicException;
 use PelicanServerGroups\Models\ServerGroup;
 use PelicanServerGroups\Models\ServerGroupMember;
 use PelicanServerGroups\Models\ServerGroupUser;
@@ -17,17 +19,13 @@ use PelicanServerGroups\Models\ServerGroupUser;
 final class ServerGroupService
 {
     /**
-     * Return only servers on nodes available to the authenticated administrator.
+     * Return servers available to a root administrator for global group management.
      *
      * @return Builder<Server>
      */
-    public static function accessibleServers(?User $user = null): Builder
+    public static function accessibleServers(User $user): Builder
     {
-        $user ??= auth()->user();
-
-        if (!$user instanceof User || !$user->isAdmin()) {
-            return Server::query()->whereKey(-1);
-        }
+        Gate::forUser($user)->authorize('viewAny', ServerGroup::class);
 
         return Server::query()
             ->select('servers.*')
@@ -39,7 +37,7 @@ final class ServerGroupService
     /**
      * @return array<int, int>
      */
-    public static function accessibleServerIds(?User $user = null): array
+    public static function accessibleServerIds(User $user): array
     {
         return array_map(
             static fn (mixed $id): int => (int) $id,
@@ -50,8 +48,10 @@ final class ServerGroupService
     /**
      * @return array<int, int>
      */
-    public static function memberIds(ServerGroup $group): array
+    public static function memberIds(ServerGroup $group, User $user): array
     {
+        Gate::forUser($user)->authorize('view', $group);
+
         return array_map(
             static fn (mixed $id): int => (int) $id,
             ServerGroupMember::query()
@@ -66,8 +66,10 @@ final class ServerGroupService
     /**
      * @return \Illuminate\Database\Eloquent\Collection<int, ServerGroupUser>
      */
-    public static function userAccess(ServerGroup $group): \Illuminate\Database\Eloquent\Collection
+    public static function userAccess(ServerGroup $group, User $user): \Illuminate\Database\Eloquent\Collection
     {
+        Gate::forUser($user)->authorize('view', $group);
+
         return ServerGroupUser::query()
             ->where('group_id', $group->getKey())
             ->with('user')
@@ -76,18 +78,14 @@ final class ServerGroupService
     }
 
     /**
-     * Replace the memberships visible to the current administrator.
-     * Memberships outside that administrator's node scope are left untouched.
+     * Replace the memberships visible to the root administrator.
      *
      * @param array<int, mixed> $serverIds
      */
-    public static function replaceMembers(ServerGroup $group, array $serverIds, ?User $user = null): void
+    public static function replaceMembers(ServerGroup $group, array $serverIds, User $user): void
     {
-        $user ??= auth()->user();
-
-        if (!$user instanceof User || !$user->isAdmin()) {
-            return;
-        }
+        static::ensurePersisted($group);
+        Gate::forUser($user)->authorize('update', $group);
 
         $accessibleIds = static::accessibleServerIds($user);
         $requestedIds = array_values(array_unique(array_map(
@@ -136,13 +134,10 @@ final class ServerGroupService
      *
      * @param array<int|string, array<int, mixed>> $userAccess
      */
-    public static function replaceUserAccess(ServerGroup $group, array $userAccess, ?User $user = null): void
+    public static function replaceUserAccess(ServerGroup $group, array $userAccess, User $user): void
     {
-        $user ??= auth()->user();
-
-        if (!$user instanceof User || !$user->isAdmin()) {
-            return;
-        }
+        static::ensurePersisted($group);
+        Gate::forUser($user)->authorize('update', $group);
 
         $normalized = [];
 
@@ -334,5 +329,12 @@ final class ServerGroupService
                     ->where('user_id', $user->getKey()),
             )
             ->select('server_id');
+    }
+
+    private static function ensurePersisted(ServerGroup $group): void
+    {
+        if (!$group->exists || $group->getKey() === null) {
+            throw new LogicException('The server group must be persisted before its members or grants can be changed.');
+        }
     }
 }

@@ -25,9 +25,11 @@ use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\Access\Response;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Gate;
 use UnitEnum;
 use PelicanServerGroups\Filament\Admin\Resources\ServerGroups\Pages\ManageServerGroups;
 use PelicanServerGroups\Models\ServerGroup;
@@ -45,14 +47,25 @@ class ServerGroupResource extends Resource
     {
         $user = auth()->user();
 
-        return $user instanceof User && $user->isAdmin();
+        return $user instanceof User && $user->isRootAdmin();
     }
 
     public static function getAuthorizationResponse(string|UnitEnum $action, ?Model $record = null): Response
     {
-        return static::isAdministrator()
-            ? Response::allow()
-            : Response::deny('Administrator access is required to manage server groups.');
+        $user = auth()->user();
+
+        if (!$user instanceof User) {
+            return Response::deny('Root administrator access is required to manage server groups.');
+        }
+
+        $ability = $action instanceof UnitEnum
+            ? ($action instanceof BackedEnum ? (string) $action->value : $action->name)
+            : $action;
+        $response = Gate::forUser($user)->inspect($ability, $record ?? static::getModel());
+
+        return $response->denied()
+            ? Response::deny('Only root administrators can manage server groups.')
+            : $response;
     }
 
     public static function getNavigationLabel(): string
@@ -120,9 +133,9 @@ class ServerGroupResource extends Resource
                             return;
                         }
 
-                         $component->state(array_values(array_intersect(
-                            ServerGroupService::memberIds($record),
-                            ServerGroupService::accessibleServerIds(),
+                        $component->state(array_values(array_intersect(
+                            ServerGroupService::memberIds($record, static::currentUser()),
+                            ServerGroupService::accessibleServerIds(static::currentUser()),
                         )));
                     })
                     ->dehydrated(false)
@@ -141,7 +154,7 @@ class ServerGroupResource extends Resource
 
                         $state = [];
 
-                        foreach (ServerGroupService::userAccess($record) as $access) {
+                        foreach (ServerGroupService::userAccess($record, static::currentUser()) as $access) {
                             $entry = [
                                 'user_id' => (int) $access->user_id,
                             ];
@@ -194,6 +207,7 @@ class ServerGroupResource extends Resource
                 CreateAction::make()
                     ->databaseTransaction()
                     ->using(function (array $data, Action $action): ServerGroup {
+                        $user = static::authorizeAction('create');
                         $serverIds = static::selectedServerIds($action);
                         $userAccess = static::selectedUserAccess($action);
 
@@ -203,8 +217,8 @@ class ServerGroupResource extends Resource
                         $group->fill($data);
                         $group->save();
 
-                        ServerGroupService::replaceMembers($group, $serverIds);
-                        ServerGroupService::replaceUserAccess($group, $userAccess);
+                        ServerGroupService::replaceMembers($group, $serverIds, $user);
+                        ServerGroupService::replaceUserAccess($group, $userAccess, $user);
 
                         return $group;
                     }),
@@ -213,14 +227,15 @@ class ServerGroupResource extends Resource
                 EditAction::make()
                     ->databaseTransaction()
                     ->using(function (array $data, ServerGroup $record, Action $action): void {
+                        $user = static::authorizeAction('update', $record);
                         $serverIds = static::selectedServerIds($action);
                         $userAccess = static::selectedUserAccess($action);
 
                         unset($data['servers'], $data['user_access']);
 
                         $record->update($data);
-                        ServerGroupService::replaceMembers($record, $serverIds);
-                        ServerGroupService::replaceUserAccess($record, $userAccess);
+                        ServerGroupService::replaceMembers($record, $serverIds, $user);
+                        ServerGroupService::replaceUserAccess($record, $userAccess, $user);
                     }),
                 DeleteAction::make()
                     ->requiresConfirmation(),
@@ -240,7 +255,7 @@ class ServerGroupResource extends Resource
      */
     private static function serverOptions(?string $search = null): array
     {
-        $query = ServerGroupService::accessibleServers();
+        $query = ServerGroupService::accessibleServers(static::currentUser());
 
         if (filled($search)) {
             $query->where('servers.name', 'like', '%' . $search . '%');
@@ -267,7 +282,7 @@ class ServerGroupResource extends Resource
             return [];
         }
 
-        return ServerGroupService::accessibleServers()
+        return ServerGroupService::accessibleServers(static::currentUser())
             ->whereIn('servers.id', $ids)
             ->pluck('servers.name', 'servers.id')
             ->all();
@@ -438,5 +453,24 @@ class ServerGroupResource extends Resource
         }
 
         return $userAccess;
+    }
+
+    private static function currentUser(): User
+    {
+        $user = auth()->user();
+
+        if (!$user instanceof User) {
+            throw new AuthorizationException('Root administrator access is required to manage server groups.');
+        }
+
+        return $user;
+    }
+
+    private static function authorizeAction(string $ability, ?ServerGroup $group = null): User
+    {
+        $user = static::currentUser();
+        Gate::forUser($user)->authorize($ability, $group ?? ServerGroup::class);
+
+        return $user;
     }
 }

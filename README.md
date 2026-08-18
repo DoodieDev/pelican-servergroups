@@ -1,6 +1,8 @@
 # Server Groups
 
-Server Groups adds global, visual groups to the Pelican server list. Administrators can create groups, choose their color, set their order, assign accessible servers, and grant existing users per-group Pelican permissions. A server can belong to one group at a time.
+Server Groups adds global, visual groups to the Pelican server list. Root administrators can create groups, choose their color, set their order, assign servers, and grant existing users per-group Pelican permissions. A server can belong to one group at a time.
+
+Group administration is intentionally restricted to root administrators because groups and grants are global across nodes. Restricted administrators retain their normal Pelican capabilities but cannot view or manage this resource.
 
 ## Import
 
