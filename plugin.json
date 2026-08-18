@@ -1,9 +1,9 @@
 {
     "id": "server-groups",
     "name": "Server Groups",
-    "author": "Local",
+    "author": "Doodie",
     "version": "1.2.0",
-    "description": "Create ordered server groups with per-user Pelican permissions.",
+    "description": "Organize servers in groups, and give users group-based permissions.",
     "category": "plugin",
     "url": null,
     "update_url": null,
@@ -13,6 +13,6 @@
         "admin",
         "app"
     ],
-    "panel_version": "^1.0.0-beta38",
+    "panel_version": null,
     "composer_packages": null
 }
