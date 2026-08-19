@@ -25,6 +25,7 @@ use Filament\Schemas\Components\Tabs\Tab;
 use Filament\Schemas\Components\Utilities\Set;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
+use Filament\Notifications\Notification;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\Access\Response;
 use Illuminate\Database\Eloquent\Builder;
@@ -181,7 +182,7 @@ class ServerGroupResource extends Resource
                         $component->state($state);
                     })
                     ->dehydrated(false)
-                    ->helperText('Each user receives the selected permissions on every server in this group.'),
+                    ->helperText('Each user receives a managed Pelican subuser with the selected permissions on every server in this group.'),
             ]);
     }
 
@@ -204,6 +205,29 @@ class ServerGroupResource extends Resource
                     ->sortable(),
             ])
             ->headerActions([
+                Action::make('synchronize_access')
+                    ->label('Synchronize access')
+                    ->requiresConfirmation()
+                    ->action(function (): void {
+                        ServerGroupService::synchronizeAll(static::authorizeAction('viewAny'));
+
+                        Notification::make()
+                            ->title('Group access synchronized')
+                            ->success()
+                            ->send();
+                    }),
+                Action::make('detach_access')
+                    ->label('Detach managed access')
+                    ->color('danger')
+                    ->requiresConfirmation()
+                    ->action(function (): void {
+                        ServerGroupService::detachAll(static::authorizeAction('viewAny'));
+
+                        Notification::make()
+                            ->title('Managed access detached')
+                            ->success()
+                            ->send();
+                    }),
                 CreateAction::make()
                     ->databaseTransaction()
                     ->using(function (array $data, Action $action): ServerGroup {
@@ -238,7 +262,12 @@ class ServerGroupResource extends Resource
                         ServerGroupService::replaceUserAccess($record, $userAccess, $user);
                     }),
                 DeleteAction::make()
-                    ->requiresConfirmation(),
+                    ->requiresConfirmation()
+                    ->using(function (ServerGroup $record): bool {
+                        ServerGroupService::deleteGroup($record, static::authorizeAction('delete', $record));
+
+                        return true;
+                    }),
             ]);
     }
 

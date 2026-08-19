@@ -8,7 +8,6 @@ use App\Models\Subuser;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\JoinClause;
-use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use LogicException;
@@ -94,6 +93,20 @@ final class ServerGroupService
         )));
         $selectedIds = array_values(array_intersect($requestedIds, $accessibleIds));
         $groupId = (int) $group->getKey();
+        $affectedGroupIds = ServerGroupMember::query()
+            ->where(static function (Builder $query) use ($groupId, $selectedIds): void {
+                $query->where('group_id', $groupId);
+
+                if (count($selectedIds) > 0) {
+                    $query->orWhereIn('server_id', $selectedIds);
+                }
+            })
+            ->pluck('group_id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->push($groupId)
+            ->unique()
+            ->values()
+            ->all();
 
         DB::transaction(function () use ($accessibleIds, $groupId, $selectedIds): void {
             if (count($accessibleIds) > 0) {
@@ -127,6 +140,14 @@ final class ServerGroupService
                 );
             }
         });
+
+        ServerGroup::query()
+            ->whereIn('id', $affectedGroupIds)
+            ->orderBy('id')
+            ->get()
+            ->each(static function (ServerGroup $affectedGroup) use ($user): void {
+                ServerGroupSubuserSynchronizer::synchronizeGroup($affectedGroup, $user);
+            });
     }
 
     /**
@@ -181,65 +202,36 @@ final class ServerGroupService
                 );
             }
         });
+
+        ServerGroupSubuserSynchronizer::synchronizeGroup($group, $user);
     }
 
-    public static function includeGroupServers(Builder $query, User $user): Builder
+    public static function deleteGroup(ServerGroup $group, User $user): void
     {
-        $baseQuery = clone $query;
-        $baseQuery->select('servers.id');
+        static::ensurePersisted($group);
+        Gate::forUser($user)->authorize('delete', $group);
 
-        return Server::query()
-            ->select('servers.*')
-            ->where(static function (Builder $query) use ($baseQuery, $user): void {
-                $query
-                    ->whereIn('servers.id', $baseQuery)
-                    ->orWhereIn('servers.id', static::groupServerIdsQuery($user));
-            });
+        DB::transaction(function () use ($group, $user): void {
+            ServerGroupSubuserSynchronizer::detachGroup($group, $user);
+            $group->delete();
+        });
     }
 
-    public static function hasGroupAccess(User $user, Server $server): bool
+    public static function synchronizeAll(User $user): void
     {
-        return Context::remember(
-            "server-groups.users.{$user->getKey()}.servers.{$server->getKey()}.access",
-            static fn (): bool => ServerGroupUser::query()
-                ->where('user_id', $user->getKey())
-                ->whereHas('group.members', static fn (Builder $query) => $query->where('server_id', $server->getKey()))
-                ->exists(),
-        );
+        ServerGroupSubuserSynchronizer::synchronizeAll($user);
     }
 
-    /**
-     * @return array<int, string>
-     */
-    public static function permissionsFor(User $user, Server $server): array
+    public static function detachAll(User $user): void
     {
-        return Context::remember(
-            "server-groups.users.{$user->getKey()}.servers.{$server->getKey()}.permissions",
-            static function () use ($user, $server): array {
-                $permissions = [];
-                $accessRecords = ServerGroupUser::query()
-                    ->where('user_id', $user->getKey())
-                    ->whereHas('group.members', static fn (Builder $query) => $query->where('server_id', $server->getKey()))
-                    ->get();
-
-                if ($accessRecords->isEmpty()) {
-                    return [];
-                }
-
-                foreach ($accessRecords as $access) {
-                    $permissions = array_merge($permissions, $access->permissions ?? []);
-                }
-
-                return static::normalizePermissions($permissions);
-            },
-        );
+        ServerGroupSubuserSynchronizer::detachAll($user);
     }
 
     /**
      * @param array<int, mixed> $permissions
      * @return array<int, string>
      */
-    public static function normalizePermissions(array $permissions): array
+    public static function normalizePermissions(array $permissions, bool $includeWebsocket = true): array
     {
         $validPermissions = array_fill_keys(Subuser::allPermissionKeys(), true);
         $normalized = [];
@@ -256,7 +248,9 @@ final class ServerGroupService
             $normalized[] = $permission;
         }
 
-        $normalized[] = SubuserPermission::WebsocketConnect->value;
+        if ($includeWebsocket) {
+            $normalized[] = SubuserPermission::WebsocketConnect->value;
+        }
         $normalized = array_values(array_unique($normalized));
         sort($normalized);
 
@@ -314,21 +308,6 @@ final class ServerGroupService
             ->orderBy('server_group_order.position')
             ->orderBy('servers.name')
             ->orderBy('servers.id');
-    }
-
-    /**
-     * @return Builder<ServerGroupMember>
-     */
-    private static function groupServerIdsQuery(User $user): Builder
-    {
-        return ServerGroupMember::query()
-            ->whereIn(
-                'group_id',
-                ServerGroupUser::query()
-                    ->select('group_id')
-                    ->where('user_id', $user->getKey()),
-            )
-            ->select('server_id');
     }
 
     private static function ensurePersisted(ServerGroup $group): void

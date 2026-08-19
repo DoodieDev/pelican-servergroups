@@ -52,4 +52,12 @@ class ServerGroup extends Model
     {
         return $this->hasMany(ServerGroupUser::class, 'group_id');
     }
+
+    /**
+     * @return HasMany<ServerGroupSubuser, $this>
+     */
+    public function managedSubusers(): HasMany
+    {
+        return $this->hasMany(ServerGroupSubuser::class, 'group_id');
+    }
 }
